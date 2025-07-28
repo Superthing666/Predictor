@@ -3,88 +3,68 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.preprocessing import StandardScaler
 
-st.set_page_config(page_title="Time Pattern Engine", layout="wide")
+# ------------------- Title ------------------- #
+st.set_page_config(page_title="Signal Classifier Dashboard", layout="wide")
+st.title("📊 Signal Classifier & Anomaly Detector")
 
-st.title("🧠 Time Pattern Engine 3.0")
-st.markdown("Upload biomedical or time-series signal data to analyze, predict, and detect anomalies.")
+# ------------------- Sidebar ------------------- #
+st.sidebar.header("Upload & Settings")
+uploaded_file = st.sidebar.file_uploader("Upload CSV file with signal data", type=["csv"])
 
-tab1, tab2, tab3 = st.tabs(["📁 Upload & Preview", "🔮 Predict", "⚠️ Anomaly Detection"])
+# ------------------- Example Data ------------------- #
+def generate_sample_data():
+    np.random.seed(42)
+    X = np.linspace(0, 10, 1000)
+    signal = np.sin(X) + 0.1 * np.random.randn(1000)
+    labels = (signal > 0).astype(int)
+    df = pd.DataFrame({"time": X, "signal": signal, "label": labels})
+    return df
 
-def create_sequences(data, window):
-    x, y = [], []
-    for i in range(len(data) - window):
-        x.append(data[i:i + window])
-        y.append(data[i + window])
-    return np.array(x), np.array(y)
+# ------------------- Load or Generate Data ------------------- #
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+else:
+    df = generate_sample_data()
+    st.sidebar.info("Using example data. Upload your own to replace it.")
 
-with tab1:
-    uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
-    if uploaded_file:
-        df = pd.read_csv(uploaded_file)
-        st.success("File uploaded successfully.")
-        st.write("### Raw Data Preview")
-        st.dataframe(df.head())
+# ------------------- Visualization ------------------- #
+st.subheader("📈 Signal Overview")
+st.line_chart(df[["signal"]])
 
-        signal_col = st.selectbox("Select signal column", df.columns)
-        signal = df[signal_col].values.reshape(-1, 1)
+# ------------------- Anomaly Detection ------------------- #
+st.subheader("🚨 Anomaly Detection")
+threshold = st.slider("Z-score threshold", min_value=1.0, max_value=5.0, value=2.5)
+df['z_score'] = (df['signal'] - df['signal'].mean()) / df['signal'].std()
+df['anomaly'] = (np.abs(df['z_score']) > threshold).astype(int)
+st.write("Detected Anomalies (in red):")
 
-        scaler = MinMaxScaler()
-        signal_scaled = scaler.fit_transform(signal)
+fig, ax = plt.subplots(figsize=(10, 3))
+ax.plot(df['time'], df['signal'], label='Signal')
+ax.scatter(df['time'][df['anomaly'] == 1], df['signal'][df['anomaly'] == 1], color='red', label='Anomaly')
+ax.legend()
+st.pyplot(fig)
 
-        st.write("### Normalized Signal")
-        fig, ax = plt.subplots()
-        ax.plot(signal_scaled)
-        st.pyplot(fig)
-        st.session_state["signal_scaled"] = signal_scaled
+# ------------------- Classification ------------------- #
+st.subheader("🧠 Signal Classification")
+features = ['signal']
 
-with tab2:
-    if "signal_scaled" in st.session_state:
-        st.subheader("Train & Predict using LSTM")
-        window_size = st.slider("Window size", 5, 100, 20)
-        epochs = st.slider("Epochs", 1, 50, 10)
+X = df[features]
+y = df['label'] if 'label' in df.columns else (df['signal'] > 0).astype(int)
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
-        data = st.session_state["signal_scaled"]
-        X, y = create_sequences(data, window_size)
-        X = X.reshape((X.shape[0], X.shape[1], 1))
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
 
-        model = Sequential([
-            LSTM(50, input_shape=(X.shape[1], 1)),
-            Dense(1)
-        ])
-        model.compile(optimizer="adam", loss="mse")
-        with st.spinner("Training LSTM..."):
-            model.fit(X, y, epochs=epochs, verbose=0)
+st.write("Classification Report:")
+st.text(classification_report(y_test, y_pred))
 
-        preds = model.predict(X)
-        rmse = np.sqrt(mean_squared_error(y, preds))
-
-        st.success(f"Model trained. RMSE: {rmse:.4f}")
-        fig2, ax2 = plt.subplots()
-        ax2.plot(y, label="True")
-        ax2.plot(preds, label="Predicted")
-        ax2.set_title("Prediction vs Actual")
-        ax2.legend()
-        st.pyplot(fig2)
-
-with tab3:
-    if "signal_scaled" in st.session_state:
-        st.subheader("Anomaly Detection (Simple Threshold)")
-
-        threshold = st.slider("Threshold (std deviations)", 2.0, 5.0, 3.0)
-        data = st.session_state["signal_scaled"].flatten()
-        mean = np.mean(data)
-        std = np.std(data)
-
-        anomalies = np.where(np.abs(data - mean) > threshold * std)[0]
-        fig3, ax3 = plt.subplots()
-        ax3.plot(data, label="Signal")
-        ax3.scatter(anomalies, data[anomalies], color="red", label="Anomalies")
-        ax3.set_title("Anomaly Detection")
-        ax3.legend()
-        st.pyplot(fig3)
+st.write("Confusion Matrix:")
+st.write(confusion_matrix(y_test, y_pred))
